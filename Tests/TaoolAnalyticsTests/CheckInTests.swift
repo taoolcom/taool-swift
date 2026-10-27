@@ -71,11 +71,11 @@ final class FakePurchases: CheckInContributor {
 /// TaoolFlags' side, as a test sets it up: what came back.
 @MainActor
 final class FakeFlags: FlagsCheckInListener {
-    var answers: [(flags: [FlagOverride]?, userFlags: [FlagOverride]?, interval: Int?, userID: String?, transition: Bool)] = []
+    var answers: [(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool)] = []
     var foregrounds = 0
 
-    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, interval: Int?, userID: String?, transition: Bool) {
-        answers.append((flags, userFlags, interval, userID, transition))
+    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool) {
+        answers.append((flags, userFlags, userID, transition))
     }
 
     func userChanged() {}
@@ -157,6 +157,7 @@ final class FakeFlags: FlagsCheckInListener {
         #expect(Level.mostPrivate([.automatic, .expanded]) == .expanded, "automatic asks for nothing")
         #expect(Level.mostPrivate([.expanded, .standard]) == .standard)
         #expect(Level.mostPrivate([.standard, .minimal, .expanded]) == .minimal)
+        #expect(Level.mostPrivate([.minimal, .off, .automatic]) == .off)
     }
 
     @Test @MainActor func factsByLevel() async {
@@ -303,7 +304,7 @@ final class FakeFlags: FlagsCheckInListener {
 
     @Test @MainActor func flagsSendTheirPartAndHearThePicks() async throws {
         StubProtocol.respond = { _ in
-            (200, Data(#"{"analytics":"standard","syncInterval":21600,"flags":[{"key":"new-sync","value":true}],"userFlags":[{"key":"new-sync","value":false}],"flagsInterval":300}"#.utf8))
+            (200, Data(#"{"analytics":"standard","syncInterval":21600,"flags":[{"key":"new-sync","value":true}],"userFlags":[{"key":"new-sync","value":false}]}"#.utf8))
         }
         let (checkIns, _) = checkIns()
         let flags = FakeFlags()
@@ -317,7 +318,6 @@ final class FakeFlags: FlagsCheckInListener {
         #expect(answer.userFlags == [FlagOverride(key: "new-sync", value: .bool(false))], "the user's apart")
         #expect(answer.userID == "player-1", "answered for the user it was sent")
         #expect(answer.transition, "the app becoming active's, so its picks apply at once")
-        #expect(answer.interval == 300, "how long before the flags are asked for again")
     }
 
     /// Player A signed in when the app last ran, and taool heard of them.
@@ -556,6 +556,20 @@ final class FakeFlags: FlagsCheckInListener {
         await checkIns.checkIn(.launch, at: .now)
         #expect(try body(StubProtocol.requests.first)["level"] as? Int == 0, "automatic, whatever the taool app said")
         #expect(try body(StubProtocol.requests.last)["level"] as? Int == 2, "the code's, never what the taool app says")
+        try FileManager.default.removeItem(at: folder)
+    }
+
+    @Test @MainActor func analyticsOffSendsNothing_butTaoolPurchasesStillChecksInAtMinimal() async throws {
+        StubProtocol.respond = { _ in (200, Self.standardAnswer) }
+        let (checkIns, folder) = checkIns()
+        checkIns.start(.flags, key: "taool_key", level: .off, bundleID: nil)
+        await checkIns.becameActive()
+        #expect(await checkIns.checkIn(.launch, at: .now))
+        #expect(!checkIns.checksIn && StubProtocol.requests.isEmpty)
+        checkIns.start(.purchases, key: "taool_key", level: .automatic, bundleID: nil)
+        await checkIns.checkIn(.launch, at: .now)
+        #expect(checkIns.checksIn && checkIns.level == .minimal, "access needs the check-in")
+        #expect(try body(StubProtocol.requests.first)["level"] as? Int == 1)
         try FileManager.default.removeItem(at: folder)
     }
 

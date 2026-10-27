@@ -91,8 +91,6 @@ struct CheckInAnswer: Decodable, Sendable, Equatable {
     var flags: [FlagOverride]? = nil
     /// TaoolFlags: the values picked for the user ID sent, proven or not.
     var userFlags: [FlagOverride]? = nil
-    /// TaoolFlags: seconds until the flags are asked for again, as the app becomes active.
-    var flagsInterval: Int? = nil
 }
 
 /// A flag's value the developer picked for this user, as taool's answer names it.

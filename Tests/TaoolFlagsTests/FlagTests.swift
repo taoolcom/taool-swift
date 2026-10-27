@@ -219,13 +219,12 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(StubProtocol.requests.count == 2 && StubProtocol.requests[1].value(forHTTPHeaderField: "If-None-Match") == #""v1""#)
         #expect(empty.isOn("new-sync"))
 
-        // taool's interval, from the check-in: 15 minutes here. Changed, the new values apply then.
-        empty.checkedIn(flags: nil, userFlags: nil, interval: 900, userID: nil, transition: false)
-        StubProtocol.respond = { _ in (200, Data(#"{"flags":[{"key":"new-sync","salt":"s","serve":{"value":false}}]}"#.utf8)) }
-        await empty.becameActive(now: .now.addingTimeInterval(200))
-        #expect(StubProtocol.requests.count == 2)
-        await empty.becameActive(now: .now.addingTimeInterval(1_000))
+        // Changed, the new values apply as they're next asked for, with taool's interval: 15 minutes here.
+        StubProtocol.respond = { _ in (200, Data(#"{"flags":[{"key":"new-sync","salt":"s","serve":{"value":false}}],"interval":900}"#.utf8)) }
+        await empty.becameActive(now: .now.addingTimeInterval(140))
         #expect(StubProtocol.requests.count == 3 && !empty.isOn("new-sync"))
+        await empty.becameActive(now: .now.addingTimeInterval(1_000))
+        #expect(StubProtocol.requests.count == 3, "not again until 15 minutes have passed")
 
         // Offline, the last values stay.
         StubProtocol.respond = { _ in nil }
@@ -239,12 +238,27 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         let (store, _) = store(kept: kept)
         #expect(!store.isOn("new-sync"), "what was kept, at launch")
         store.checkedIn(flags: [FlagOverride(key: "new-sync", value: .bool(true)), FlagOverride(key: "made-since", value: .bool(true))],
-                        userFlags: nil, interval: nil, userID: nil, transition: true)
+                        userFlags: nil, userID: nil, transition: true)
         #expect(store.isOn("new-sync") && store.isOn("made-since"), "a pick for a flag made since the flags were sent counts too")
-        store.checkedIn(flags: nil, userFlags: nil, interval: nil, userID: nil, transition: true)
+        store.checkedIn(flags: nil, userFlags: nil, userID: nil, transition: true)
         #expect(store.isOn("new-sync"), "taool didn't look: the picks stay")
-        store.checkedIn(flags: [], userFlags: nil, interval: nil, userID: nil, transition: true)
+        store.checkedIn(flags: [], userFlags: nil, userID: nil, transition: true)
         #expect(!store.isOn("new-sync"), "none any more")
+    }
+
+    @Test @MainActor func analyticsOff_theReadSaysSo_andNoPickApplies() async throws {
+        var kept = FlagState()
+        kept.file = FlagFile(flags: [.init(key: "beta", salt: "s", serve: .init(value: .bool(false)))])
+        kept.accountPicks = [FlagOverride(key: "beta", value: .bool(true))]
+        let (store, checkIns) = store(kept: kept)
+        checkIns.start(.flags, key: "taool_key", level: .off, bundleID: nil)
+        StubProtocol.respond = { _ in
+            (200, Data(#"{"flags":[{"key":"beta","salt":"s","serve":{"value":false}}],"picked":true}"#.utf8))
+        }
+        await store.becameActive()
+        let request = try #require(StubProtocol.requests.first)
+        #expect(request.url?.absoluteString == "https://api.test/v1/flags/com.example.app?key=taool_key&analytics=off")
+        #expect(!store.isOn("beta"), "an earlier build's pick, which nothing keeps up to date now")
     }
 
     @Test @MainActor func eachUsersPicksTheirOwnOfflineToo() async {
@@ -256,7 +270,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
             await Task.yield()
         }
         await signIn("player-a")
-        store.checkedIn(flags: [], userFlags: [FlagOverride(key: "beta", value: .bool(true))], interval: nil, userID: "player-a", transition: true)
+        store.checkedIn(flags: [], userFlags: [FlagOverride(key: "beta", value: .bool(true))], userID: "player-a", transition: true)
         #expect(store.isOn("beta"))
         // Player B signs in with taool out of reach: A's pick stops at once.
         await signIn("player-b")
@@ -287,7 +301,7 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         await store.becameActive(now: now)
         #expect(!store.isOn("rollout"))
         // A purchase's answer later on changes nothing on screen, nor does the rollout's step reached since.
-        store.checkedIn(flags: [FlagOverride(key: "picked", value: .bool(true))], userFlags: nil, interval: nil, userID: nil, transition: false)
+        store.checkedIn(flags: [FlagOverride(key: "picked", value: .bool(true))], userFlags: nil, userID: nil, transition: false)
         #expect(!store.isOn("picked") && !store.isOn("rollout"))
         await store.becameActive(now: now.addingTimeInterval(120))
         #expect(store.isOn("picked") && store.isOn("rollout"))

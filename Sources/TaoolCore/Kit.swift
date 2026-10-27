@@ -7,7 +7,7 @@ import Foundation
 /// How TaoolKit talks to taool: kit.taool.com, in a session of its own, with dates as "2026-10-15T08:00:00Z" both ways.
 package enum Kit {
     /// TaoolKit's own version, which a release's tag must be (`scripts/release.sh`).
-    package static let version = "1.0.0"
+    package static let version = "1.1.0"
 
     package static let baseURL = URL(string: "https://kit.taool.com")!
 

@@ -37,6 +37,7 @@ struct MyApp: App {
 
 - **The app has its own accounts:** pass the signed-in user's stable ID, and `nil` while no one is signed in, read from wherever the app keeps its session so the modifier sees sign-ins and sign-outs: `.taoolFlags(key: "taool_public_REPLACE_ME", userID: session.userID)`. The developer can then pick a user by it in the taool app. Ask the developer if it isn't clear which ID that is. If the app also has `.taoolPurchases`, pass it the same `userID`: the two share one signed-in user. A `nil` in the first 3 seconds after the first modifier, while the session may still be loading at launch, doesn't sign anyone out; after that, `nil` means no one is signed in.
 - **Debug builds with their own bundle ID:** pass the App Store app's, `bundleID: "com.example.app"`. It's the same ID in release builds, so there's no need for `#if DEBUG`.
+- **Only if the developer asks for TaoolFlags to send nothing about its users:** `analytics: .off`. Flags, percentages, rollouts and targeting rules work as before, but there's no check-in, so the developer can't pick users by Apple Account or user ID (the taool app turns picking off once the app reads its flags this way), and taool doesn't count the app's users. With `.taoolPurchases` in the app, it checks in anyway, at `.minimal`.
 
 ## 3. Declare the flags
 
@@ -84,7 +85,7 @@ Use the reader for the flag's type: one of another type gives the fallback. A da
 
 ## Privacy
 
-Tell the developer what TaoolFlags sends: it asks taool for the app's flags (with the key and bundle ID, nothing about the user) and checks in through TaoolAnalytics, which it includes, sending the user ID they pass, if any, so users picked by it get their values. Percentages, rollouts and targeting rules (app version, OS, device, country, language, when the app was downloaded, what the user has bought) are worked out on the device, so nothing about it is sent for them. Its privacy manifest declares a user ID, for app functionality, not used for tracking, alongside TaoolAnalytics' own; the App Store privacy answers should include them, as linked to the user if the app passes its own user IDs.
+Tell the developer what TaoolFlags sends: it asks taool for the app's flags (with the key and bundle ID, nothing about the user) and checks in through TaoolAnalytics, which it includes, sending the user ID they pass, if any, so users picked by it get their values. Percentages, rollouts and targeting rules (app version, OS, device, country, language, when the app was downloaded, what the user has bought) are worked out on the device, so nothing about it is sent for them. Its privacy manifest declares a user ID, for app functionality, not used for tracking, alongside TaoolAnalytics' own; the App Store privacy answers should include them, as linked to the user if the app passes its own user IDs. With `analytics: .off` and no `.taoolPurchases`, nothing is collected (`.taoolAnalytics` sends nothing either: the most private level holds), so the answer for TaoolKit is Data Not Collected, though Xcode's privacy report still lists the manifests' declarations.
 
 ## Rules
 

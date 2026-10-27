@@ -9,6 +9,10 @@ import TaoolCore
 /// The app's flags as taool sends them, each one's value worked out on the device (`FlagRules.value`).
 struct FlagFile: Codable, Sendable, Equatable {
     var flags: [Flag]
+    /// How many seconds the flags are asked for again after.
+    var interval: Int?
+    /// Users are picked for the app's flags, whose values only the check-in brings.
+    var picked: Bool?
 
     /// Whether a rule asks what the user has bought, which only then is read from StoreKit.
     var asksForProducts: Bool {

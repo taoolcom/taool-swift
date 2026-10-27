@@ -33,7 +33,7 @@ import SwiftUI
 /// device, so reading one never waits on the network. New values apply as the app comes to the foreground or a user signs
 /// in or out, never in the middle of a screen. Percentages, rollouts and targeting rules are worked out on the device, so
 /// nothing about it is sent for them. It checks in through TaoolAnalytics, which it includes, for the users you pick by
-/// hand.
+/// hand; with `analytics: .off` nothing is sent, and those picks don't reach the app.
 public enum TaoolFlags {
     /// Whether the flag with this key is on for this user now. Off for a key taool doesn't know.
     @MainActor
@@ -130,7 +130,8 @@ extension View {
     ///     taool app gets their values on every device. Pass the current user each time, so signing in and out take effect;
     ///     with TaoolKit's other modifiers, pass it the same.
     ///   - analytics: How much the device tells taool about itself (`TaoolAnalytics.Level`). `.automatic` (recommended) is
-    ///     switched between standard and expanded in the taool app; any other level is a code override.
+    ///     switched between standard and expanded in the taool app; any other level is a code override. `.off` sends
+    ///     nothing, so users can't be picked.
     ///   - bundleID: The App Store app's bundle ID, when a debug build uses a different one.
     public func taoolFlags(key: String, userID: String? = nil, analytics: TaoolAnalytics.Level = .automatic,
                            bundleID: String? = nil) -> some View {

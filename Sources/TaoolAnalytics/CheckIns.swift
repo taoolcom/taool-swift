@@ -30,10 +30,9 @@ package protocol CheckInContributor: AnyObject {
 @MainActor
 package protocol FlagsCheckInListener: AnyObject {
     /// What taool answered: the values picked for this Apple Account (`flags`) and for the user ID it was sent
-    /// (`userFlags`), each nil when taool didn't look (the device keeps what it had), how many seconds the flags are asked
-    /// for again after (`interval`, nil when not said), and whether new values may show now (`transition`): the check-in
-    /// went as the app became active or left, or for a new user.
-    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, interval: Int?, userID: String?, transition: Bool)
+    /// (`userFlags`), each nil when taool didn't look (the device keeps what it had), and whether new values may show now
+    /// (`transition`): the check-in went as the app became active or left, or for a new user.
+    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool)
     /// Another user is signed in (`CheckIns.userID`): their own values apply at once.
     func userChanged()
     /// The app came to the foreground, its first scene becoming active: what's new applies now.
@@ -144,8 +143,15 @@ package final class CheckIns {
     /// The app's bundle ID, or the one the modifiers pass for it.
     package var bundleID: String? { settings.bundleID ?? Bundle.main.bundleIdentifier }
 
-    /// The level the app's code asks for: the most private of the modifiers', `.automatic` where none sets one.
-    private var codeLevel: TaoolAnalytics.Level { .mostPrivate(settings.levels.values) }
+    /// The level the app's code asks for: the most private of the modifiers', `.automatic` where none sets one. Off is
+    /// minimal with TaoolPurchases, whose access needs the check-in.
+    private var codeLevel: TaoolAnalytics.Level {
+        let level = TaoolAnalytics.Level.mostPrivate(settings.levels.values)
+        return level == .off && settings.levels[.purchases] != nil ? .minimal : level
+    }
+
+    /// Whether the device checks in at all: never while the app's code turns analytics off.
+    package var checksIn: Bool { codeLevel != .off }
 
     /// The level a check-in sends (never `.automatic`): the code's, else the taool app's (standard until it has said).
     package var level: TaoolAnalytics.Level { codeLevel.level(remote: state.analytics) }
@@ -282,8 +288,10 @@ package final class CheckIns {
         }
     }
 
-    /// Whether a check-in for `reason` at `urgency` goes now: the most urgent of the two and what's queued (`atOnce`).
+    /// Whether a check-in for `reason` at `urgency` goes now: the most urgent of the two and what's queued (`atOnce`),
+    /// never while the app's code turns analytics off.
     private func isDue(_ reason: CheckInReason, at urgency: CheckInUrgency, now: Date) -> Bool {
+        guard checksIn else { return false }
         let queued: CheckInUrgency = contributor?.pendingReason != nil ? .atOnce : .whenDue
         return CheckInSchedule.isDue(state, urgency: max(urgency, reason.urgency, queued), now: now)
     }
@@ -332,8 +340,7 @@ package final class CheckIns {
             // about the user it carried, so it's left out once another has signed in.
             let otherUser = userID == state.userID ? answer.otherUser : nil
             if let next { contributor?.checkedIn(.answered(otherUser: otherUser, grants: answer.grants), sent: next.sent) }
-            flagsListener?.checkedIn(flags: answer.flags, userFlags: answer.userFlags, interval: answer.flagsInterval,
-                                     userID: userID, transition: transition)
+            flagsListener?.checkedIn(flags: answer.flags, userFlags: answer.userFlags, userID: userID, transition: transition)
             return .answered
         case .refused:
             log.error("taool refused a check-in as invalid, so it's dropped.")

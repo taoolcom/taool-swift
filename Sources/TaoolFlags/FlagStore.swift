@@ -20,8 +20,6 @@ struct FlagState: FileState, Equatable {
     /// apply, and a user's own come back as they sign in again, offline too.
     var userPicks: [UserPicks] = []
     var facts = FlagFacts()
-    /// How many seconds the flags are asked for again after, as taool last said; nil until it has.
-    var interval: Int?
 
     struct UserPicks: Codable, Sendable, Equatable {
         let userID: String
@@ -93,7 +91,7 @@ final class FlagStore: FlagsCheckInListener {
         state = file.read() ?? FlagState()
         state.facts.readRunningApp()
         saved = state
-        values = Self.values(state, userID: checkIns.userID, access: checkIns.accessProducts, now: activeAt)
+        values = Self.values(state, userID: checkIns.userID, picks: checkIns.checksIn, access: checkIns.accessProducts, now: activeAt)
     }
 
     func isOn(_ key: String) -> Bool {
@@ -151,10 +149,8 @@ final class FlagStore: FlagsCheckInListener {
 
     /// taool's answer to a check-in: the values picked for this Apple Account and for the user ID sent, each nil when taool
     /// didn't look, which keeps what was kept; the picks apply at once for the app becoming active or leaving and for a user
-    /// signing in or out, any other's (a purchase's) waiting for the app to become active again. And how long to wait before
-    /// asking for the flags again, kept for the next time it's due.
-    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, interval: Int?, userID: String?, transition: Bool) {
-        if let interval { state.interval = interval }
+    /// signing in or out, any other's (a purchase's) waiting for the app to become active again.
+    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool) {
         if let flags { state.accountPicks = flags }
         if let userFlags, let userID {
             state.userPicks.removeAll { $0.userID == userID }
@@ -177,6 +173,8 @@ final class FlagStore: FlagsCheckInListener {
         guard !key.isEmpty, let bundleID = checkIns.bundleID else { return }
         var url = baseURL.appending(path: "v1/flags/\(bundleID)")
         url.append(queryItems: [URLQueryItem(name: "key", value: key)])
+        // So the taool app knows picks can't reach this device, and says so where they're made.
+        if !checkIns.checksIn { url.append(queryItems: [URLQueryItem(name: "analytics", value: "off")]) }
         var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)
         if let etag { request.setValue(etag, forHTTPHeaderField: "If-None-Match") }
         // Asked, whatever comes of it: a failure waits the interval too.
@@ -186,8 +184,12 @@ final class FlagStore: FlagsCheckInListener {
             let http = response as? HTTPURLResponse
             switch http?.statusCode {
             case 200:
-                state.file = try Kit.decoder.decode(FlagFile.self, from: data)
+                let flags = try Kit.decoder.decode(FlagFile.self, from: data)
+                state.file = flags
                 etag = http?.value(forHTTPHeaderField: "ETag")
+                if flags.picked == true, !checkIns.checksIn {
+                    Notice.once("Users are picked for this app's flags in taool, but analytics: .off keeps their values from this device. Use .minimal or higher to pick users.", log: log)
+                }
             case 304:
                 break
             case 404:
@@ -200,14 +202,14 @@ final class FlagStore: FlagsCheckInListener {
         }
     }
 
-    /// How long the flags are asked for again after: what taool last said, within `intervals`, else `defaultInterval`.
+    /// How long the flags are asked for again after: what taool last said with them, within `intervals`, else `defaultInterval`.
     private var interval: TimeInterval {
-        state.interval.map { min(max(TimeInterval($0), Self.intervals.lowerBound), Self.intervals.upperBound) } ?? Self.defaultInterval
+        state.file?.interval.map { min(max(TimeInterval($0), Self.intervals.lowerBound), Self.intervals.upperBound) } ?? Self.defaultInterval
     }
 
     /// Every value again, as of when the app last came to the foreground.
     private func recompute() {
-        let next = Self.values(state, userID: checkIns.userID, access: checkIns.accessProducts, now: activeAt)
+        let next = Self.values(state, userID: checkIns.userID, picks: checkIns.checksIn, access: checkIns.accessProducts, now: activeAt)
         guard next != values else { return }
         values = next
         decoded = [:]
@@ -215,9 +217,10 @@ final class FlagStore: FlagsCheckInListener {
 
     /// Every flag's value from what's kept, with `userID` signed in: the flags taool sent, each worked out for this user,
     /// and a pick for a flag not in them yet (made since they were sent) as it was picked. `access`, TaoolPurchases' products
-    /// that give access now, is what a subscribed rule goes by where the app has it, so it's whoever's signed in now.
-    static func values(_ state: FlagState, userID: String?, access: Set<String>? = nil, now: Date) -> [String: JSONValue] {
-        let picked = state.picks(for: userID)
+    /// that give access now, is what a subscribed rule goes by where the app has it, so it's whoever's signed in now. No pick
+    /// applies without the check-in (`picks` false), which alone keeps them up to date, not even one an earlier build heard.
+    static func values(_ state: FlagState, userID: String?, picks: Bool = true, access: Set<String>? = nil, now: Date) -> [String: JSONValue] {
+        let picked = picks ? state.picks(for: userID) : [:]
         var values = picked
         var facts = state.facts
         facts.userID = FlagRules.canonical(userID)

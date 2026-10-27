@@ -37,6 +37,10 @@ public enum TaoolAnalytics {
         /// Analytics → the app), standard until you turn Expanded Analytics on there. The only level the
         /// taool app can change.
         case automatic
+        /// A code override: no check-in, so nothing is sent. taool then can't count your users, and the users you pick
+        /// for a TaoolFlags flag by Apple Account or user ID don't get their values. With TaoolPurchases, whose access
+        /// needs the check-in, it's `.minimal`. TaoolExperiments' reports aren't the check-in, so they go at every level.
+        case off
         /// A code override: nothing about the device, only which Apple Account this is, the user ID you pass,
         /// and with TaoolPurchases the signed purchases access needs. taool then can't show which versions or
         /// countries your users are on.
@@ -56,9 +60,11 @@ public enum TaoolAnalytics {
             return remote == "expanded" ? .expanded : .standard
         }
 
-        /// As the check-in sends it: 0 automatic, then the code's levels, the most private first.
+        /// As the check-in sends it: 0 automatic, then the code's levels, the most private first; off, which never checks
+        /// in, below them all.
         package var number: Int {
             switch self {
+            case .off: -1
             case .automatic: 0
             case .minimal: 1
             case .standard: 2
