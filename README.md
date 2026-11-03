@@ -6,6 +6,7 @@ The Swift package for [taool](https://taool.com). One package, one product per f
 - **TaoolExperiments**, A/B tests: shows each user one variant of a screen and tells you which variant gets more users to do what you're after, from starting a trial to trying a feature.
 - **TaoolAnalytics**, your users: each Apple Account that opens your app checks in now and then, so taool counts your users (weekly and monthly, daily with expanded analytics) and the versions they're on, with no sign-in, Subscriptions or server needed.
 - **TaoolFlags**, feature flags: features you turn on from the taool app with no app update, for a few users while you test, in TestFlight, then for everyone, at once or a step at a time. It includes TaoolAnalytics.
+- **TaoolMilestones**, milestones: the moments your users reach (finished onboarding, made a first project), the first time each, so the taool app shows who reached what and where the rest stopped. It includes TaoolAnalytics.
 - **TaoolPurchases**, in-app purchases: who has access to what (subscriptions, lifetime unlocks and other non-consumables), StoreKit's answer the moment your app starts, kept right by taool (grants you give, a subscription that moved to another of your users), with your own StoreKit code doing the buying. It includes TaoolAnalytics.
 
 ## Install
@@ -22,6 +23,7 @@ Or in `Package.swift`:
 .product(name: "TaoolAnalytics", package: "taool-swift")
 .product(name: "TaoolPurchases", package: "taool-swift")   // includes TaoolAnalytics
 .product(name: "TaoolFlags", package: "taool-swift")       // includes TaoolAnalytics
+.product(name: "TaoolMilestones", package: "taool-swift")  // includes TaoolAnalytics
 ```
 
 The package supports iOS 17, iPadOS 17, watchOS 10, tvOS 17, macOS 14 and visionOS 1 or later (TaoolUpdates iOS, iPadOS and macOS alone), and has no dependencies. On tvOS, TaoolKit keeps what it knows in Caches, which the system may empty when the Apple TV runs low on space: it then starts as on a fresh install, checking in at the next launch, flags off until that launch's fetch, and each user's experiment variant the same, since it comes from who they are.
@@ -356,10 +358,31 @@ For a support or debug screen, `await TaoolAnalytics.appTransactionID()` is Stor
 ### How it works
 
 - **Who a user is:** an Apple Account, by StoreKit's AppTransaction. One person on several devices, or after a reinstall, is one user. No sign-in needed; with your `userID`, the taool app groups a user's Apple Accounts under it.
-- **One check-in for the whole app.** However many of TaoolKit's products the app links, and however many scenes and modifiers it has, it checks in once: TaoolPurchases and TaoolFlags go through the same check-in and add their part to it.
+- **One check-in for the whole app.** However many of TaoolKit's products the app links, and however many scenes and modifiers it has, it checks in once: TaoolPurchases, TaoolFlags and TaoolMilestones go through the same check-in and add their part to it.
 - **Not on every open.** It checks in at a cold launch, then as the app becomes active or goes to the background when one is due: every 6 hours. So a long session checks in as it starts and, past the interval, as it ends, and nothing is sent while the app sits in the background. A check-in that fails waits on the device and tries again. Everything goes to `kit.taool.com`.
 - **Analytics.** Standard: your app's version and build, TaoolKit's version, the platform, the App Store country (from StoreKit, never the IP), the language your app runs in, the language the user chose in Settings (which your app may not have) and the device's region. Expanded: also when the app was last opened and how often, and the days it was opened on (counted on the device, sent with the next check-in), the OS version, and the kind of device and its model ("iPhone17,1"). `analytics: .automatic` (the default, **recommended**) lets you switch between the two in the taool app (TaoolKit → Analytics → the app), with no app update: standard until you turn Expanded Analytics on, a taool Pro feature. Without Pro, taool keeps only the standard facts, whatever the level. Any other level is a code override the taool app can't change: `.standard` stays standard even with Expanded Analytics on, `.expanded` sends expanded even with it off, and `.minimal`, which only code can set, sends nothing about the device, only which Apple Account this is and the user ID you pass, and with TaoolPurchases the signed purchases access needs; `.off` sends nothing at all, so taool can't count your users or bring TaoolFlags' picks, and with TaoolPurchases, whose access needs the check-in, it's `.minimal`. With more than one of `.taoolAnalytics`, `.taoolPurchases` and `.taoolFlags`, the most private level any of them asks for holds. Never IDFA, IDFV, an install ID, the IP or the device's name, so two devices of the same model on one Apple Account read as one.
 - **What's sent:** the key, the bundle ID, StoreKit's signed AppTransaction (which Apple Account this is, and when it first downloaded the app from the App Store), the `userID` you pass, the level your code sets (so the taool app shows it beside the switch), and the analytics above. Once, after the App Store build is installed over a TestFlight build on the same device (or the other way), the previous build's signed AppTransaction too, so the taool app shows the two as one user. It's kept in TaoolKit's own file in Application Support (Caches on tvOS, which the system may empty), never your defaults, and lost if the app is deleted. The privacy manifest declares what standard analytics need: a user ID and purchase history (the AppTransaction is the app's own purchase record), for analytics, not linked to the user and never for tracking, and your App Store privacy answers include the same, as linked to the user only if you pass TaoolKit your own `userID`. **Expanded analytics are off for most apps, so they're not in TaoolKit's manifest:** before you turn them on, in the taool app or in code, add product interaction and other diagnostic data (analytics, not for tracking, linked as above; the device's model is diagnostic data too) to your app's own `PrivacyInfo.xcprivacy` and App Store privacy answers.
+
+## Milestones (TaoolMilestones)
+
+```swift
+import TaoolMilestones
+
+ContentView()
+    .taoolMilestones(key: "taool_public_…")   // each scene's root view
+
+TaoolMilestones.record("onboarding-done")    // wherever it happens, as often as it does
+```
+
+taool keeps the first time each user reached each milestone, on their page in the taool app's Earn → Users, where Users filters by one, and in funnels of the steps you pick. Call `record` every time the moment happens: only the first time is kept, and it's sent once.
+
+### How it works
+
+- **Sent once, in the check-in.** A milestone goes in TaoolKit's check-in a moment after it's first recorded, beside StoreKit's signed AppTransaction, so it lands only on the Apple Account it's from: nobody can record one for someone else. One that can't go yet (offline, or before StoreKit has said who this is) waits on the device for the next time the app comes to the foreground or leaves. It's kept in TaoolKit's own file in Application Support (Caches on tvOS), never your defaults.
+- **Names only.** Letters, digits, `.`, `_` and `-`, up to 64, the same whatever its case. taool shows only an app's first names, as many as its developer's plan allows, so keep to the moments that matter. Never anything about the user in a name.
+- **Apart from experiments.** A milestone and a TaoolExperiments goal share nothing, even under the same name: record both when an experiment should count the moment.
+- **Never access.** A user can record only their own milestones, but can record them, so never give anything by one.
+- **Privacy.** The privacy manifest declares product interaction and a user ID, for analytics, not linked to the user and never for tracking; your App Store privacy answers include the same, as linked to the user if you pass your own `userID`. With `analytics: .off` on any TaoolKit modifier, nothing is sent and milestones aren't kept, which the console says once.
 
 ## In-app purchases (TaoolPurchases)
 

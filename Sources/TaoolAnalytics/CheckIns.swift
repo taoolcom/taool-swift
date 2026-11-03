@@ -39,6 +39,18 @@ package protocol FlagsCheckInListener: AnyObject {
     func becameActive(now: Date) async
 }
 
+/// TaoolMilestones' side of the check-in: the milestones an Apple Account reached that taool doesn't have, which go in the
+/// next check-in that proves that Apple Account, and make one go at once.
+@MainActor
+package protocol MilestonesCheckInPart: AnyObject {
+    /// Something waits to be sent: a check-in goes at once.
+    var hasPending: Bool { get }
+    /// The next report's milestones for this Apple Account (its appTransactionID), at most what one report carries.
+    func nextMilestones(for account: String) -> [CheckInReport.Milestone]
+    /// taool answered (or refused) a report that carried these: they're never sent again.
+    func checkedIn(_ sent: [CheckInReport.Milestone], account: String)
+}
+
 /// What became of a purchases part.
 package enum CheckInOutcome: Sendable, Equatable {
     /// taool answered: about this Apple Account, its subscriptions that are another user's and its grants,
@@ -59,7 +71,7 @@ package final class CheckIns {
 
     /// What started it, each with the level its code asks for and the user the app passes it.
     package enum Starter: Hashable, Sendable {
-        case analytics, purchases, flags
+        case analytics, purchases, flags, milestones
     }
 
     struct Settings {
@@ -80,6 +92,7 @@ package final class CheckIns {
     private let appTransaction: @MainActor () async -> AppTransactionFacts?
     private weak var contributor: (any CheckInContributor)?
     private weak var flagsListener: (any FlagsCheckInListener)?
+    private weak var milestones: (any MilestonesCheckInPart)?
     private let log = Logger(subsystem: "TaoolKit", category: "check-in")
     private var checkInChain: Task<Bool, Never>?
     private var activating: Task<Void, Never>?
@@ -133,6 +146,11 @@ package final class CheckIns {
         flagsListener = listener
     }
 
+    /// TaoolMilestones, which adds what waits to the next report.
+    package func attach(milestones part: any MilestonesCheckInPart) {
+        milestones = part
+    }
+
     /// The products that give access now as TaoolPurchases has them, taool's grants included; nil in an app without it, or
     /// before it has read StoreKit this launch.
     package var accessProducts: Set<String>? { contributor?.accessProducts }
@@ -160,7 +178,9 @@ package final class CheckIns {
     package var userID: String? { state.userID }
 
     /// The user the app passes now, whichever modifiers it passes one to.
-    private var appUserID: String? { settings.userIDs[.purchases] ?? settings.userIDs[.flags] ?? settings.userIDs[.analytics] }
+    private var appUserID: String? {
+        settings.userIDs[.purchases] ?? settings.userIDs[.flags] ?? settings.userIDs[.milestones] ?? settings.userIDs[.analytics]
+    }
 
     /// The user the app passes, applied at once, so the next render (another scene's too) finds nothing to do, and once
     /// the session grace has passed, checked in. Until then the app's first check-in carries them.
@@ -282,7 +302,11 @@ package final class CheckIns {
         var (reason, urgency, leaving, transition) = (reason, urgency, leaving, transition)
         while true {
             let sent = await sendCheckIn(reason, at: urgency, leaving: leaving, transition: transition)
-            guard sent == .answered, let pending = contributor?.pendingReason else { return sent != .failed }
+            // More milestones than one check-in carries go on too, but only after one that carried some: without an
+            // AppTransaction none can go, and they wait.
+            let moreMilestones = carriedMilestones && milestones?.hasPending == true
+            guard sent == .answered, let pending = contributor?.pendingReason ?? (moreMilestones ? .milestone : nil)
+            else { return sent != .failed }
             // What's left of the queue goes at once, under the reason it was queued with, no longer the transition's.
             (reason, urgency, leaving, transition) = (pending, .whenDue, false, false)
         }
@@ -292,11 +316,14 @@ package final class CheckIns {
     /// never while the app's code turns analytics off.
     private func isDue(_ reason: CheckInReason, at urgency: CheckInUrgency, now: Date) -> Bool {
         guard checksIn else { return false }
-        let queued: CheckInUrgency = contributor?.pendingReason != nil ? .atOnce : .whenDue
+        let queued: CheckInUrgency = contributor?.pendingReason != nil || milestones?.hasPending == true ? .atOnce : .whenDue
         return CheckInSchedule.isDue(state, urgency: max(urgency, reason.urgency, queued), now: now)
     }
 
     private enum Sent { case answered, nothingDue, failed }
+
+    /// The last check-in sent carried milestones.
+    private var carriedMilestones = false
 
     private func sendCheckIn(_ reason: CheckInReason, at urgency: CheckInUrgency, leaving: Bool, transition: Bool, now: Date = .now) async -> Sent {
         // Nothing goes without a key: not an answer from taool.
@@ -319,9 +346,15 @@ package final class CheckIns {
         // The other build's, kept from before it was installed over: once, as the environment changed.
         var previous: String?
         if let kept = state.keptAppTransaction, let current, kept.isTestBuild != current.isTestBuild { previous = kept.signed }
+        // Milestones only with the AppTransaction that proves whose they are; without one, they wait.
+        let milestonesPart = current.flatMap { app in milestones.map { (account: app.id, sent: $0.nextMilestones(for: app.id)) } }
+            .flatMap { $0.sent.isEmpty ? nil : $0 }
+        carriedMilestones = milestonesPart != nil
         let report = CheckInReport(
-            reason: max(reason, pendingReason ?? reason), appTransaction: current?.signed, userId: userID, level: codeLevel.number,
-            device: await device, purchases: next?.part, flush: leaving ? true : nil, flags: flags, previousAppTransaction: previous)
+            reason: max(reason, pendingReason ?? reason, milestonesPart == nil ? reason : .milestone), appTransaction: current?.signed,
+            userId: userID, level: codeLevel.number, device: await device, purchases: next?.part, flush: leaving ? true : nil, flags: flags,
+            // TaoolMilestones' part whenever it's in the app, empty while nothing's new, as TaoolFlags' is, so taool knows it's linked.
+            previousAppTransaction: previous, milestones: milestonesPart?.sent ?? (milestones == nil ? nil : []))
 
         switch await client.send(report, key: settings.key, bundleID: bundleID) {
         case .answered(let answer):
@@ -340,6 +373,7 @@ package final class CheckIns {
             // about the user it carried, so it's left out once another has signed in.
             let otherUser = userID == state.userID ? answer.otherUser : nil
             if let next { contributor?.checkedIn(.answered(otherUser: otherUser, grants: answer.grants), sent: next.sent) }
+            if let milestonesPart { milestones?.checkedIn(milestonesPart.sent, account: milestonesPart.account) }
             flagsListener?.checkedIn(flags: answer.flags, userFlags: answer.userFlags, userID: userID, transition: transition)
             return .answered
         case .refused:
@@ -347,6 +381,7 @@ package final class CheckIns {
             checkedIn(at: now, userID: userID, carrying: current)
             save()
             if let next { contributor?.checkedIn(.refused, sent: next.sent) }
+            if let milestonesPart { milestones?.checkedIn(milestonesPart.sent, account: milestonesPart.account) }
             return .answered
         case .unknownApp:
             Notice.once("taool doesn't know \(bundleID) for this key. Is it one of your apps in taool, and is the key right?", log: log)

@@ -6,18 +6,20 @@ import Foundation
 import TaoolCore
 
 /// Why a check-in is sent, weakest first: a restore or purchase moves a subscription to the user
-/// signed in (with accounts), a user change sends what the device has again, and a launch or update
-/// only reports what's new. A check-in sends the strongest reason of what it carries.
+/// signed in (with accounts), a user change sends what the device has again, a milestone goes soon
+/// after it's reached, and a launch or update only reports what's new. A check-in sends the strongest
+/// reason of what it carries.
 package enum CheckInReason: String, Codable, Sendable, Comparable {
-    case launch, update, user, purchase, restore
+    case launch, update, milestone, user, purchase, restore
 
     private var strength: Int {
         switch self {
         case .launch: 0
         case .update: 1
-        case .user: 2
-        case .purchase: 3
-        case .restore: 4
+        case .milestone: 2
+        case .user: 3
+        case .purchase: 4
+        case .restore: 5
         }
     }
 
@@ -27,15 +29,15 @@ package enum CheckInReason: String, Codable, Sendable, Comparable {
     var urgency: CheckInUrgency {
         switch self {
         case .launch, .update: .whenDue
-        case .user: .atOnce
+        case .milestone, .user: .atOnce
         case .purchase, .restore: .now
         }
     }
 }
 
 /// One check-in: which Apple Account this is (StoreKit's signed AppTransaction), who's signed in, what the device says
-/// about itself at the app's analytics level, and TaoolPurchases' and TaoolFlags' parts: what StoreKit signed that taool
-/// hasn't seen.
+/// about itself at the app's analytics level, and TaoolPurchases', TaoolFlags' and TaoolMilestones' parts: what StoreKit
+/// signed that taool hasn't seen, and the milestones it doesn't have.
 package struct CheckInReport: Encodable, Sendable, Equatable {
     /// TaoolPurchases' part, sent whenever it's in the app, even with nothing in it.
     package struct Purchases: Encodable, Sendable, Equatable {
@@ -52,6 +54,16 @@ package struct CheckInReport: Encodable, Sendable, Equatable {
 
     /// TaoolFlags' part, sent (empty) whenever it's in the app, so taool answers with the values picked for this user.
     package struct Flags: Encodable, Sendable, Equatable {}
+
+    /// One of TaoolMilestones' part: a milestone this Apple Account reached, and when it first did.
+    package struct Milestone: Encodable, Sendable, Equatable {
+        package let name: String
+        package let at: Date
+
+        package init(name: String, at: Date) {
+            (self.name, self.at) = (name, at)
+        }
+    }
 
     let reason: CheckInReason
     // Minimal: every check-in. Which Apple Account this is, as StoreKit signed it; nothing about the device.
@@ -71,6 +83,9 @@ package struct CheckInReport: Encodable, Sendable, Equatable {
     /// The AppTransaction kept from the other build this device ran (TestFlight's before the App Store's, or the other
     /// way), sent once as it changes, so taool knows the two are one Apple Account; Apple signed it, as it did the other.
     var previousAppTransaction: String? = nil
+    /// With TaoolMilestones, the milestones this Apple Account reached that taool doesn't have, only beside the AppTransaction that
+    /// proves which Apple Account it is.
+    var milestones: [Milestone]? = nil
 }
 
 /// What taool answered. An empty list means none, and the device drops what it had; a list left out means taool didn't

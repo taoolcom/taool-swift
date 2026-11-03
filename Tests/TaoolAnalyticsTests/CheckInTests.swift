@@ -68,6 +68,26 @@ final class FakePurchases: CheckInContributor {
     func userChanged() {}
 }
 
+/// TaoolMilestones' side, as a test sets it up: what waits for each Apple Account, and what was asked.
+@MainActor
+final class FakeMilestones: MilestonesCheckInPart {
+    var waiting: [String] = []
+    var asked: [String] = []
+    var sent: [(names: [String], account: String)] = []
+
+    var hasPending: Bool { !waiting.isEmpty }
+
+    func nextMilestones(for account: String) -> [CheckInReport.Milestone] {
+        asked.append(account)
+        return waiting.map { CheckInReport.Milestone(name: $0, at: Date(timeIntervalSince1970: 1_800_000_000)) }
+    }
+
+    func checkedIn(_ milestones: [CheckInReport.Milestone], account: String) {
+        sent.append((milestones.map(\.name), account))
+        waiting.removeAll { name in milestones.contains { $0.name == name } }
+    }
+}
+
 /// TaoolFlags' side, as a test sets it up: what came back.
 @MainActor
 final class FakeFlags: FlagsCheckInListener {
@@ -136,6 +156,7 @@ final class FakeFlags: FlagsCheckInListener {
     @Test func reasons() {
         #expect(max(CheckInReason.launch, .restore) == .restore && CheckInReason.purchase > .user)
         #expect(CheckInReason.update.urgency == .whenDue && CheckInReason.user.urgency == .atOnce && CheckInReason.purchase.urgency == .now)
+        #expect(CheckInReason.milestone > .update && CheckInReason.milestone < .user && CheckInReason.milestone.urgency == .atOnce)
         #expect(max(CheckInUrgency.coldLaunch, .whenDue, .atOnce) == .atOnce)
     }
 }
@@ -582,5 +603,44 @@ final class FakeFlags: FlagsCheckInListener {
         let launch = try body(StubProtocol.requests.last)
         #expect(launch["userId"] as? String == "player-c" && launch["purchases"] == nil && launch["flags"] == nil)
         try FileManager.default.removeItem(at: folder)
+    }
+
+    @Test @MainActor func milestones_goAtOnce_besideTheAppTransaction_andOnce() async throws {
+        StubProtocol.respond = { _ in (200, Self.standardAnswer) }
+        // Checked in a minute ago, so nothing else is due.
+        let (checkIns, folder) = checkIns(kept: kept(checkedIn: 60))
+        let milestones = FakeMilestones()
+        checkIns.attach(milestones: milestones)
+        await checkIns.checkIn(.launch)
+        #expect(StubProtocol.requests.isEmpty, "nothing waits, nothing's due")
+
+        milestones.waiting = ["onboarding-done", "first-project"]
+        await checkIns.checkIn(.milestone)
+        let sent = try body(StubProtocol.requests.last)
+        #expect(sent["reason"] as? String == "milestone" && sent["appTransaction"] as? String == "app.jws.sig")
+        let reached = try #require(sent["milestones"] as? [[String: Any]])
+        #expect(reached.compactMap { $0["name"] as? String } == ["onboarding-done", "first-project"])
+        #expect(reached.first?["at"] as? String == "2027-01-15T08:00:00Z")
+        #expect(milestones.asked == ["7001"] && milestones.sent.map(\.account) == ["7001"], "for the Apple Account StoreKit proves")
+
+        // Sent, so the next check-in carries none, and nothing makes one go.
+        await checkIns.checkIn(.launch)
+        #expect(StubProtocol.requests.count == 1)
+        try FileManager.default.removeItem(at: folder)
+    }
+
+    @Test @MainActor func milestones_waitWithoutAnAppTransaction() async throws {
+        StubProtocol.respond = { _ in (200, Self.standardAnswer) }
+        let folder = FileManager.default.temporaryDirectory.appending(path: "taoolkit-\(UUID())")
+        let checkIns = CheckIns(file: StateFile(url: folder.appending(path: "check-in.json")), client: client, appTransaction: { nil })
+        checkIns.start(.milestones, key: "taool_key", level: .automatic, bundleID: "com.example.app")
+        let milestones = FakeMilestones()
+        milestones.waiting = ["demo-used"]
+        checkIns.attach(milestones: milestones)
+        await checkIns.checkIn(.milestone)
+        #expect((try body(StubProtocol.requests.last)["milestones"] as? [Any])?.isEmpty == true,
+                "nothing proves whose they are, so the part goes empty, saying only that the app links TaoolMilestones")
+        #expect(milestones.asked.isEmpty && milestones.hasPending)
+        try? FileManager.default.removeItem(at: folder)
     }
 }

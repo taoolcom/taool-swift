@@ -213,9 +213,7 @@ final class ExperimentStore: @unchecked Sendable {
     }
 
     /// What taool accepts as an experiment's key or a goal's name.
-    static func isCodeName(_ name: String) -> Bool {
-        (1...64).contains(name.count) && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }
-    }
+    static func isCodeName(_ name: String) -> Bool { Kit.isCodeName(name) }
 
     /// Up to 64 UTF-16 units, as taool counts them.
     static func isVariantName(_ name: String) -> Bool {

@@ -18,6 +18,7 @@ let package = Package(
         .library(name: "TaoolAnalytics", targets: ["TaoolAnalytics"]),
         .library(name: "TaoolPurchases", targets: ["TaoolPurchases"]),
         .library(name: "TaoolFlags", targets: ["TaoolFlags"]),
+        .library(name: "TaoolMilestones", targets: ["TaoolMilestones"]),
     ],
     targets: [
         // What the products share, never a product of its own: it sends nothing by itself.
@@ -39,10 +40,14 @@ let package = Package(
         // Declares, on top of TaoolAnalytics', the developer's user ID when the app passes one, for app functionality. What
         // its rules read about the device stays on it.
         .target(name: "TaoolFlags", dependencies: ["TaoolAnalytics", "TaoolCore"], resources: [.copy("PrivacyInfo.xcprivacy")]),
+        // Declares, on top of TaoolAnalytics', product interaction (the milestones the app records) and a user ID, for analytics,
+        // not linked to the user, as TaoolExperiments' are: linked only when the app passes its own user ID.
+        .target(name: "TaoolMilestones", dependencies: ["TaoolAnalytics", "TaoolCore"], resources: [.copy("PrivacyInfo.xcprivacy")]),
         .testTarget(name: "TaoolUpdatesTests", dependencies: ["TaoolUpdates", "TaoolCore"]),
         .testTarget(name: "TaoolExperimentsTests", dependencies: ["TaoolExperiments", "TaoolCore"]),
         .testTarget(name: "TaoolAnalyticsTests", dependencies: ["TaoolAnalytics", "TaoolCore"]),
         .testTarget(name: "TaoolPurchasesTests", dependencies: ["TaoolPurchases", "TaoolAnalytics", "TaoolCore"]),
         .testTarget(name: "TaoolFlagsTests", dependencies: ["TaoolFlags", "TaoolAnalytics", "TaoolCore"]),
+        .testTarget(name: "TaoolMilestonesTests", dependencies: ["TaoolMilestones", "TaoolAnalytics", "TaoolCore"]),
     ]
 )

@@ -30,7 +30,7 @@ public enum TaoolAnalytics {
 
     /// How much the device tells taool about itself. Leave it at `.automatic` (recommended) to switch between
     /// standard and expanded in the taool app, with no app update; any other level is a code override, which
-    /// the taool app can't change, and shows beside its switch. Set with the `analytics:` of `.taoolAnalytics`, `.taoolPurchases` or `.taoolFlags`;
+    /// the taool app can't change, and shows beside its switch. Set with the `analytics:` of `.taoolAnalytics`, `.taoolPurchases`, `.taoolFlags` or `.taoolMilestones`;
     /// when the code asks for more than one level, the most private holds.
     public enum Level: Sendable, Hashable {
         /// **Recommended**, and the default: standard or expanded, switched in the taool app (TaoolKit →
@@ -38,7 +38,7 @@ public enum TaoolAnalytics {
         /// taool app can change.
         case automatic
         /// A code override: no check-in, so nothing is sent. taool then can't count your users, and the users you pick
-        /// for a TaoolFlags flag by Apple Account or user ID don't get their values. With TaoolPurchases, whose access
+        /// for a TaoolFlags flag by Apple Account or user ID don't get their values, and TaoolMilestones keeps no milestones. With TaoolPurchases, whose access
         /// needs the check-in, it's `.minimal`. TaoolExperiments' reports aren't the check-in, so they go at every level.
         case off
         /// A code override: nothing about the device, only which Apple Account this is, the user ID you pass,

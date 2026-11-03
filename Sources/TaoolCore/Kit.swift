@@ -7,7 +7,7 @@ import Foundation
 /// How TaoolKit talks to taool: kit.taool.com, in a session of its own, with dates as "2026-10-15T08:00:00Z" both ways.
 package enum Kit {
     /// TaoolKit's own version, which a release's tag must be (`scripts/release.sh`).
-    package static let version = "1.1.0"
+    package static let version = "1.2.0"
 
     package static let baseURL = URL(string: "https://kit.taool.com")!
 
@@ -38,6 +38,12 @@ package enum Kit {
             return nil
         }
         return id
+    }
+
+    /// What taool takes as a code's name, an experiment's key, a goal's or a milestone's: letters, digits, ".", "_" and "-", up
+    /// to 64.
+    package static func isCodeName(_ name: String) -> Bool {
+        (1...64).contains(name.count) && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "._-".contains($0)) }
     }
 
     /// A user ID that's a UUID, with its dashes or without, as taool's server reads it too.
