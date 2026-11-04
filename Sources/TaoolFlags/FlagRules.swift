@@ -15,8 +15,13 @@ struct FlagFile: Codable, Sendable, Equatable {
     var picked: Bool?
 
     /// Whether a rule asks what the user has bought, which only then is read from StoreKit.
-    var asksForProducts: Bool {
-        flags.contains { $0.rules?.contains { $0.when.contains { $0.attribute == "subscribed" } } ?? false }
+    var asksForProducts: Bool { asks("subscribed") }
+
+    /// Whether a rule asks what milestones the user reached, which the check-in answers.
+    var asksMilestones: Bool { asks("milestone") }
+
+    private func asks(_ attribute: String) -> Bool {
+        flags.contains { $0.rules?.contains { $0.when.contains { $0.attribute == attribute } } ?? false }
     }
 
     struct Flag: Codable, Sendable, Equatable {
@@ -91,6 +96,9 @@ struct FlagFacts: Codable, Sendable, Equatable {
     var downloadedAt: Date?
     /// The products that give access now (`FlagStore.products`).
     var products: Set<String> = []
+    /// The milestones this Apple Account reached, lowercased: taool's answer, on any of its devices, and what this device
+    /// recorded (`FlagStore.values`). Nil without the check-in (analytics off), when a milestone rule can't say.
+    var milestones: Set<String>?
 
     /// What's kept on the device: what StoreKit says, which takes a moment at launch or may not come. Never the user ID,
     /// which is whoever's signed in now, nor the running app's version, OS, kind of device and language, read as it
@@ -186,6 +194,11 @@ enum FlagRules {
             return condition.op == "onorafter" ? downloaded >= day : downloaded < day
         case ("subscribed", "is"), ("subscribed", "isnot"):
             let has = values.isEmpty ? !facts.products.isEmpty : values.contains(where: facts.products.contains)
+            return condition.op == "is" ? has : !has
+        case ("milestone", "is"), ("milestone", "isnot"):
+            // Reached any of the names, whatever their case; neither while the device can't know (analytics off).
+            guard let reached = facts.milestones else { return false }
+            let has = values.contains { reached.contains($0.lowercased()) }
             return condition.op == "is" ? has : !has
         default:
             return false

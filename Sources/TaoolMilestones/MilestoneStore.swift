@@ -134,6 +134,12 @@ final class MilestoneStore: MilestonesCheckInPart {
             .map { CheckInReport.Milestone(name: $0.key, at: $0.value.at) }
     }
 
+    func reached(for account: String?) -> Set<String> {
+        var names = Array(saved.unclaimed.keys)
+        if let account, let kept = saved.accounts[account] { names += kept.keys }
+        return Set(names.map { $0.lowercased() })
+    }
+
     func checkedIn(_ sent: [CheckInReport.Milestone], account: String) {
         for milestone in sent { saved.accounts[account]?[milestone.name]?.sent = true }
         file.write(saved)

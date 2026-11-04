@@ -158,6 +158,13 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(holds("subscribed", "is", [], facts) && holds("subscribed", "isnot", ["pro.monthly"], facts))
         facts.territory = nil
         #expect(!holds("country", "notin", ["SWE"], facts), "never in or out of a list while the device doesn't know")
+        // Reached any of the names, whatever their case, or none of them; neither without the check-in.
+        facts.milestones = ["onboarding-done"]
+        #expect(holds("milestone", "is", ["widget-added", "Onboarding-Done"], facts) && !holds("milestone", "isnot", ["onboarding-done"], facts))
+        #expect(holds("milestone", "isnot", ["widget-added"], facts) && !holds("milestone", "is", ["widget-added"], facts))
+        facts.milestones = nil
+        #expect(!holds("milestone", "is", ["onboarding-done"], facts) && !holds("milestone", "isnot", ["onboarding-done"], facts),
+                "analytics off: the device can't know either way")
     }
 
     @Test func anOSVersionForEachKindOfDevice() {
@@ -244,6 +251,31 @@ final class StubProtocol: URLProtocol, @unchecked Sendable {
         #expect(store.isOn("new-sync"), "taool didn't look: the picks stay")
         store.checkedIn(flags: [], userFlags: nil, userID: nil, transition: true)
         #expect(!store.isOn("new-sync"), "none any more")
+    }
+
+    @Test @MainActor func milestoneRulesGoByTaoolsAnswerForThisAppleAccount_andWhatThisDeviceRecorded() {
+        let rule = FlagFile.Rule(when: [.init(attribute: "milestone", op: "is", values: ["onboarding-done"])], serve: .init(value: .bool(true)))
+        var kept = FlagState()
+        kept.file = FlagFile(flags: [.init(key: "tide-alerts", salt: "s", rules: [rule], serve: .init(value: .bool(false)))])
+        kept.facts.appTransactionID = "7001"
+        func values(_ state: FlagState, recorded: Set<String> = [], picks: Bool = true) -> Bool {
+            FlagStore.values(state, userID: nil, picks: picks, recorded: recorded, now: .now)["tide-alerts"] == .bool(true)
+        }
+        #expect(!values(kept), "reached nowhere yet")
+        #expect(values(kept, recorded: ["onboarding-done"]), "recorded on this device: at once")
+        kept.milestones = ReachedMilestones(account: "7001", names: ["Onboarding-Done"])
+        #expect(values(kept), "reached on another of the Apple Account's devices, as taool answered")
+        #expect(!values(kept, picks: false), "never without the check-in")
+        kept.milestones = ReachedMilestones(account: "7002", names: ["onboarding-done"])
+        #expect(!values(kept), "another Apple Account's never apply: a TestFlight build's, a shared iPad's")
+
+        let (store, _) = store(kept: { var state = kept; state.milestones = nil; return state }())
+        #expect(!store.isOn("tide-alerts"))
+        store.checkedIn(flags: [], userFlags: nil, milestones: ReachedMilestones(account: "7001", names: ["onboarding-done"]), userID: nil,
+                        transition: true)
+        #expect(store.isOn("tide-alerts"), "applied with the picks")
+        store.checkedIn(flags: nil, userFlags: nil, milestones: nil, userID: nil, transition: true)
+        #expect(store.isOn("tide-alerts"), "taool didn't look: what was kept stays")
     }
 
     @Test @MainActor func analyticsOff_theReadSaysSo_andNoPickApplies() async throws {

@@ -106,6 +106,22 @@ struct CheckInAnswer: Decodable, Sendable, Equatable {
     var flags: [FlagOverride]? = nil
     /// TaoolFlags: the values picked for the user ID sent, proven or not.
     var userFlags: [FlagOverride]? = nil
+    /// TaoolFlags: every milestone this Apple Account reached, on any of its devices; only while the app's flags' rules ask
+    /// about any and the check-in proved whose it is.
+    var milestones: [String]? = nil
+}
+
+/// The milestones an Apple Account (`account`, its appTransactionID) reached on any of its devices, lowercased, as a check-in's
+/// answer said while the app's flags ask about any: kept for that Apple Account alone, never another's on the same device (a
+/// TestFlight build's, a shared iPad's).
+package struct ReachedMilestones: Codable, Sendable, Equatable {
+    package let account: String
+    package let names: Set<String>
+
+    package init(account: String, names: [String]) {
+        self.account = account
+        self.names = Set(names.map { $0.lowercased() })
+    }
 }
 
 /// A flag's value the developer picked for this user, as taool's answer names it.

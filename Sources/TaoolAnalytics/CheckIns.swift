@@ -30,9 +30,10 @@ package protocol CheckInContributor: AnyObject {
 @MainActor
 package protocol FlagsCheckInListener: AnyObject {
     /// What taool answered: the values picked for this Apple Account (`flags`) and for the user ID it was sent
-    /// (`userFlags`), each nil when taool didn't look (the device keeps what it had), and whether new values may show now
-    /// (`transition`): the check-in went as the app became active or left, or for a new user.
-    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool)
+    /// (`userFlags`), and the milestones this Apple Account reached on any of its devices, while the app's flags' rules ask
+    /// about any (`milestones`), each nil when taool didn't look (the device keeps what it had), and whether new values may
+    /// show now (`transition`): the check-in went as the app became active or left, or for a new user.
+    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, milestones: ReachedMilestones?, userID: String?, transition: Bool)
     /// Another user is signed in (`CheckIns.userID`): their own values apply at once.
     func userChanged()
     /// The app came to the foreground, its first scene becoming active: what's new applies now.
@@ -49,6 +50,9 @@ package protocol MilestonesCheckInPart: AnyObject {
     func nextMilestones(for account: String) -> [CheckInReport.Milestone]
     /// taool answered (or refused) a report that carried these: they're never sent again.
     func checkedIn(_ sent: [CheckInReport.Milestone], account: String)
+    /// The names recorded on this device for this Apple Account, sent or not, with those recorded before StoreKit said whose
+    /// they are, lowercased: what TaoolFlags' milestone rules add to taool's answer, so one counts here at once.
+    func reached(for account: String?) -> Set<String>
 }
 
 /// What became of a purchases part.
@@ -170,6 +174,12 @@ package final class CheckIns {
 
     /// Whether the device checks in at all: never while the app's code turns analytics off.
     package var checksIn: Bool { codeLevel != .off }
+
+    /// The milestones recorded on this device for an Apple Account (`MilestonesCheckInPart.reached`), none without
+    /// TaoolMilestones in the app: TaoolFlags' milestone rules.
+    package func recordedMilestones(for account: String?) -> Set<String> {
+        milestones?.reached(for: account) ?? []
+    }
 
     /// The level a check-in sends (never `.automatic`): the code's, else the taool app's (standard until it has said).
     package var level: TaoolAnalytics.Level { codeLevel.level(remote: state.analytics) }
@@ -374,7 +384,8 @@ package final class CheckIns {
             let otherUser = userID == state.userID ? answer.otherUser : nil
             if let next { contributor?.checkedIn(.answered(otherUser: otherUser, grants: answer.grants), sent: next.sent) }
             if let milestonesPart { milestones?.checkedIn(milestonesPart.sent, account: milestonesPart.account) }
-            flagsListener?.checkedIn(flags: answer.flags, userFlags: answer.userFlags, userID: userID, transition: transition)
+            let reached = current.flatMap { app in answer.milestones.map { ReachedMilestones(account: app.id, names: $0) } }
+            flagsListener?.checkedIn(flags: answer.flags, userFlags: answer.userFlags, milestones: reached, userID: userID, transition: transition)
             return .answered
         case .refused:
             log.error("taool refused a check-in as invalid, so it's dropped.")

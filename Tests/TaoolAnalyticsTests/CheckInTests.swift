@@ -86,16 +86,18 @@ final class FakeMilestones: MilestonesCheckInPart {
         sent.append((milestones.map(\.name), account))
         waiting.removeAll { name in milestones.contains { $0.name == name } }
     }
+
+    func reached(for account: String?) -> Set<String> { [] }
 }
 
 /// TaoolFlags' side, as a test sets it up: what came back.
 @MainActor
 final class FakeFlags: FlagsCheckInListener {
-    var answers: [(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool)] = []
+    var answers: [(flags: [FlagOverride]?, userFlags: [FlagOverride]?, milestones: ReachedMilestones?, userID: String?, transition: Bool)] = []
     var foregrounds = 0
 
-    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool) {
-        answers.append((flags, userFlags, userID, transition))
+    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, milestones: ReachedMilestones?, userID: String?, transition: Bool) {
+        answers.append((flags, userFlags, milestones, userID, transition))
     }
 
     func userChanged() {}
@@ -339,6 +341,18 @@ final class FakeFlags: FlagsCheckInListener {
         #expect(answer.userFlags == [FlagOverride(key: "new-sync", value: .bool(false))], "the user's apart")
         #expect(answer.userID == "player-1", "answered for the user it was sent")
         #expect(answer.transition, "the app becoming active's, so its picks apply at once")
+        #expect(answer.milestones == nil, "nothing about milestones while the answer says none")
+    }
+
+    @Test @MainActor func flagsHearTheMilestonesTheirRulesAskAbout() async throws {
+        StubProtocol.respond = { _ in (200, Data(#"{"analytics":"standard","syncInterval":21600,"flags":[],"milestones":["onboarding-done"]}"#.utf8)) }
+        let (checkIns, _) = checkIns()
+        let flags = FakeFlags()
+        checkIns.attach(flags: flags)
+        checkIns.start(.flags, key: "taool_key", level: .automatic, bundleID: nil)
+        await checkIns.becameActive()
+        #expect(try #require(flags.answers.first).milestones == ReachedMilestones(account: "7001", names: ["Onboarding-Done"]),
+                "for the Apple Account StoreKit's record proved, lowercased")
     }
 
     /// Player A signed in when the app last ran, and taool heard of them.

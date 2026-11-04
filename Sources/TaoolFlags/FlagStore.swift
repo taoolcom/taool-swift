@@ -20,6 +20,8 @@ struct FlagState: FileState, Equatable {
     /// apply, and a user's own come back as they sign in again, offline too.
     var userPicks: [UserPicks] = []
     var facts = FlagFacts()
+    /// The milestones this device's Apple Account reached on any of its devices, as taool last answered; nil until it has.
+    var milestones: ReachedMilestones?
 
     struct UserPicks: Codable, Sendable, Equatable {
         let userID: String
@@ -91,7 +93,7 @@ final class FlagStore: FlagsCheckInListener {
         state = file.read() ?? FlagState()
         state.facts.readRunningApp()
         saved = state
-        values = Self.values(state, userID: checkIns.userID, picks: checkIns.checksIn, access: checkIns.accessProducts, now: activeAt)
+        recompute()
     }
 
     func isOn(_ key: String) -> Bool {
@@ -147,11 +149,13 @@ final class FlagStore: FlagsCheckInListener {
         recompute()
     }
 
-    /// taool's answer to a check-in: the values picked for this Apple Account and for the user ID sent, each nil when taool
-    /// didn't look, which keeps what was kept; the picks apply at once for the app becoming active or leaving and for a user
-    /// signing in or out, any other's (a purchase's) waiting for the app to become active again.
-    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, userID: String?, transition: Bool) {
+    /// taool's answer to a check-in: the values picked for this Apple Account and for the user ID sent, and the milestones
+    /// it reached that the rules ask about, each nil when taool didn't look, which keeps what was kept; they apply at once for
+    /// the app becoming active or leaving and for a user signing in or out, any other's (a purchase's) waiting for the app to
+    /// become active again.
+    func checkedIn(flags: [FlagOverride]?, userFlags: [FlagOverride]?, milestones: ReachedMilestones? = nil, userID: String?, transition: Bool) {
         if let flags { state.accountPicks = flags }
+        if let milestones { state.milestones = milestones }
         if let userFlags, let userID {
             state.userPicks.removeAll { $0.userID == userID }
             state.userPicks = Array((state.userPicks + [.init(userID: userID, picks: userFlags)]).suffix(FlagState.maxUsers))
@@ -187,6 +191,10 @@ final class FlagStore: FlagsCheckInListener {
                 let flags = try Kit.decoder.decode(FlagFile.self, from: data)
                 state.file = flags
                 etag = http?.value(forHTTPHeaderField: "ETag")
+                // A milestone rule before taool has said what this Apple Account reached: asked now, not at the next check-in.
+                if flags.asksMilestones, checkIns.checksIn, state.milestones?.account != state.facts.appTransactionID {
+                    Task { _ = await checkIns.checkIn(.milestone, at: .atOnce) }
+                }
                 if flags.picked == true, !checkIns.checksIn {
                     Notice.once("Users are picked for this app's flags in taool, but analytics: .off keeps their values from this device. Use .minimal or higher to pick users.", log: log)
                 }
@@ -209,7 +217,8 @@ final class FlagStore: FlagsCheckInListener {
 
     /// Every value again, as of when the app last came to the foreground.
     private func recompute() {
-        let next = Self.values(state, userID: checkIns.userID, picks: checkIns.checksIn, access: checkIns.accessProducts, now: activeAt)
+        let next = Self.values(state, userID: checkIns.userID, picks: checkIns.checksIn, access: checkIns.accessProducts,
+                               recorded: checkIns.recordedMilestones(for: state.facts.appTransactionID), now: activeAt)
         guard next != values else { return }
         values = next
         decoded = [:]
@@ -219,12 +228,18 @@ final class FlagStore: FlagsCheckInListener {
     /// and a pick for a flag not in them yet (made since they were sent) as it was picked. `access`, TaoolPurchases' products
     /// that give access now, is what a subscribed rule goes by where the app has it, so it's whoever's signed in now. No pick
     /// applies without the check-in (`picks` false), which alone keeps them up to date, not even one an earlier build heard.
-    static func values(_ state: FlagState, userID: String?, picks: Bool = true, access: Set<String>? = nil, now: Date) -> [String: JSONValue] {
+    /// A milestone rule goes by taool's answer for this Apple Account and what this device recorded (`recorded`,
+    /// TaoolMilestones'), never without the check-in either.
+    static func values(_ state: FlagState, userID: String?, picks: Bool = true, access: Set<String>? = nil, recorded: Set<String> = [],
+                       now: Date) -> [String: JSONValue] {
         let picked = picks ? state.picks(for: userID) : [:]
         var values = picked
         var facts = state.facts
         facts.userID = FlagRules.canonical(userID)
         if let access { facts.products = access }
+        // Taool's answer for this Apple Account alone, and what this device recorded.
+        let heard = state.milestones.flatMap { $0.account == facts.appTransactionID ? $0.names : nil } ?? []
+        facts.milestones = picks ? heard.union(recorded) : nil
         for flag in state.file?.flags ?? [] {
             values[flag.key] = FlagRules.value(of: flag, picked: picked[flag.key], facts: facts, now: now)
         }
